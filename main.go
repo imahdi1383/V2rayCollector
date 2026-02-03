@@ -21,7 +21,7 @@ import (
 var (
 	client       = &http.Client{}
 	maxMessages  = 100
-	ConfigsNames = "@VaslMishi جوین بده قطع نشی"
+	ConfigsNames = "@VaslMishi جوین بدی، وصل میشی"
 	configs      = map[string]string{
 		"ss":     "",
 		"vmess":  "",
