@@ -1,0 +1,26 @@
+{
+    "bean": {
+        "_v": 0,
+        "addr": "51.44.32.14",
+        "name": "@Vip_Security join us - 454",
+        "pass": "telegram-id-privatevpns",
+        "port": 22222,
+        "stream": {
+            "alpn": "http/1.1",
+            "ed_len": 0,
+            "insecure": true,
+            "mux_s": 0,
+            "net": "tcp",
+            "sec": "tls",
+            "sni": "trojan.burgerip.co.uk"
+        }
+    },
+    "gid": 0,
+    "id": 0,
+    "traffic": {
+        "dl": 0,
+        "ul": 0
+    },
+    "type": "trojan",
+    "yc": 0
+}

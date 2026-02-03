@@ -1,0 +1,25 @@
+{
+    "bean": {
+        "_v": 0,
+        "addr": "57.129.140.88",
+        "method": "chacha20-ietf-poly1305",
+        "name": "[🏁]t.me/ConfigsHub",
+        "pass": "k1v5g9FefdoO",
+        "port": 8388,
+        "stream": {
+            "ed_len": 0,
+            "insecure": false,
+            "mux_s": 0,
+            "net": "tcp"
+        },
+        "uot": 0
+    },
+    "gid": 0,
+    "id": 1,
+    "traffic": {
+        "dl": 0,
+        "ul": 0
+    },
+    "type": "shadowsocks",
+    "yc": 0
+}
