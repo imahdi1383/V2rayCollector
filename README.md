@@ -17,6 +17,59 @@ Trojan |https://raw.githubusercontent.com/youfoundamin/V2rayCollector/main/troja
 Vless|https://raw.githubusercontent.com/youfoundamin/V2rayCollector/main/vless_iran.txt|
 Mixed (configs of this are different)|https://raw.githubusercontent.com/youfoundamin/V2rayCollector/main/mixed_iran.txt|
 
+# Run locally (without GitHub Actions)
+
+## Prerequisites
+- Go 1.22+ (see `go.mod`)
+
+## Windows (PowerShell)
+Install Go (example via winget):
+
+```powershell
+winget install --id GoLang.Go --source winget
+go version
+```
+
+Run once from the repo root:
+
+```powershell
+go mod download
+go run . -sort
+```
+
+If Telegram opens in your browser but CLI tools time out, you likely need the same proxy/VPN your browser uses.
+Go uses `HTTP_PROXY` / `HTTPS_PROXY` env vars (it does not automatically use Windows proxy settings):
+
+```powershell
+$env:HTTP_PROXY="http://127.0.0.1:2080"
+$env:HTTPS_PROXY="http://127.0.0.1:2080"
+go run . -sort
+```
+
+Or use the helper scripts:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-once.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-every-15min.ps1
+```
+
+`scripts/run-once.ps1` will also try to auto-use your Windows proxy settings if `HTTP_PROXY`/`HTTPS_PROXY` are not set.
+
+## Linux / macOS
+
+```bash
+go mod download
+go run . -sort
+```
+
+## Outputs
+This overwrites these files in the repo root:
+- `vmess_iran.txt`
+- `vless_iran.txt`
+- `trojan_iran.txt`
+- `ss_iran.txt`
+- `mixed_iran.txt`
+
 
 ## Todos
  - [x] Adding comments to functions
