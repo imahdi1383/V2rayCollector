@@ -1,1 +1,5 @@
+# Configuration files
+/nekoray-4.0.1-2024-12-12-windows64/nekoray/config/profiles
+
+# Log files
 /nekoray-4.0.1-2024-12-12-windows64/nekoray/config/neko.log
