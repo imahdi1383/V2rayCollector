@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mrvcoder/V2rayCollector/collector"
 
@@ -43,11 +44,16 @@ var (
 		"trojan": `(?m)trojan:\/\/.+?(%3A%40|#)`,
 		"vless":  `(?m)vless:\/\/.+?(%3A%40|#)`,
 	}
-	sort             = flag.Bool("sort", false, "sort from latest to oldest (default : false)")
-	nekorayEnabled   = flag.Bool("nekoray", true, "export configs into NekoRay profiles dir if available (use -nekoray=false to disable)")
-	nekorayProfiles  = flag.String("nekoray-profiles", "", "path to NekoRay profiles directory (optional)")
-	nekorayGroupID   = flag.Int("nekoray-group", 0, "NekoRay group id (default: 0)")
-	nekorayInputFile = flag.String("nekoray-input", "mixed_iran.txt", "input file to import into NekoRay (default: mixed_iran.txt)")
+	sort                   = flag.Bool("sort", false, "sort from latest to oldest (default : false)")
+	nekorayEnabled         = flag.Bool("nekoray", true, "export configs into NekoRay profiles dir if available (use -nekoray=false to disable)")
+	nekorayProfiles        = flag.String("nekoray-profiles", "", "path to NekoRay profiles directory (optional)")
+	nekorayGroupID         = flag.Int("nekoray-group", 0, "NekoRay group id (default: 0)")
+	nekorayInputFile       = flag.String("nekoray-input", "mixed_iran.txt", "input file to import into NekoRay (default: mixed_iran.txt)")
+	nekorayURLTest         = flag.Bool("nekoray-urltest", true, "run NekoRay-like URL Test for imported profiles and sort group by lowest latency")
+	nekorayURLTestAll      = flag.Bool("nekoray-urltest-all", false, "URL test all profiles in the group (can be slow)")
+	nekorayTestURL         = flag.String("nekoray-test-url", "", "override URL used for URL test (default from NekoRay settings)")
+	nekorayTestTimeoutSec  = flag.Int("nekoray-test-timeout", 0, "URL test timeout in seconds (default from NekoRay settings)")
+	nekorayTestConcurrency = flag.Int("nekoray-test-concurrency", 0, "URL test concurrency (default from NekoRay settings)")
 )
 
 type ChannelsType struct {
@@ -127,11 +133,36 @@ func main() {
 		}
 
 		if profilesDir != "" {
-			added, skipped, err := collector.ExportMixedToNekoRayProfiles(*nekorayInputFile, profilesDir, *nekorayGroupID)
+			addedIDs, skipped, err := collector.ExportMixedToNekoRayProfiles(*nekorayInputFile, profilesDir, *nekorayGroupID)
 			if err != nil {
 				gologger.Error().Msg("NekoRay export failed: " + err.Error())
-			} else if added > 0 || skipped > 0 {
-				gologger.Info().Msg(fmt.Sprintf("NekoRay export: added=%d skipped=%d dir=%s", added, skipped, profilesDir))
+			} else if len(addedIDs) > 0 || skipped > 0 {
+				gologger.Info().Msg(fmt.Sprintf("NekoRay export: added=%d skipped=%d dir=%s", len(addedIDs), skipped, profilesDir))
+			}
+
+			if *nekorayURLTest {
+				onlyIDs := addedIDs
+				if *nekorayURLTestAll {
+					onlyIDs = nil
+				}
+				timeout := time.Duration(0)
+				if *nekorayTestTimeoutSec > 0 {
+					timeout = time.Duration(*nekorayTestTimeoutSec) * time.Second
+				}
+				tested, ok, err := collector.NekoRayURLTestAndSort(collector.NekoRayURLTestOptions{
+					ProfilesDir: profilesDir,
+					GroupID:     *nekorayGroupID,
+					OnlyIDs:     onlyIDs,
+					TestURL:     strings.TrimSpace(*nekorayTestURL),
+					Timeout:     timeout,
+					Concurrency: *nekorayTestConcurrency,
+					UpdateOrder: true,
+				})
+				if err != nil {
+					gologger.Error().Msg("NekoRay URL test failed: " + err.Error())
+				} else if tested > 0 {
+					gologger.Info().Msg(fmt.Sprintf("NekoRay URL test: tested=%d ok=%d", tested, ok))
+				}
 			}
 		}
 	}

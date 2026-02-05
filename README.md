@@ -77,6 +77,9 @@ Flags:
 - Disable: `-nekoray=false`
 - Custom profiles dir: `-nekoray-profiles "C:\path\to\nekoray\config\profiles"`
 - Import a different file: `-nekoray-input vless_iran.txt`
+- URL test + sort by ping (default enabled): `-nekoray-urltest=true`
+- URL test all profiles (can be slow): `-nekoray-urltest-all=true`
+- Override test URL / timeouts: `-nekoray-test-url http://cp.cloudflare.com/ -nekoray-test-timeout 30 -nekoray-test-concurrency 5`
 
 
 ## Todos

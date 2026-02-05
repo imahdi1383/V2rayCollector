@@ -109,38 +109,38 @@ func FindNekoRayProfilesDir(repoRoot string) (string, error) {
 	return "", nil
 }
 
-func ExportMixedToNekoRayProfiles(mixedFilePath string, profilesDir string, groupID int) (added int, skipped int, err error) {
+func ExportMixedToNekoRayProfiles(mixedFilePath string, profilesDir string, groupID int) (addedIDs []int, skipped int, err error) {
 	if mixedFilePath == "" {
-		return 0, 0, errors.New("mixedFilePath is empty")
+		return nil, 0, errors.New("mixedFilePath is empty")
 	}
 
 	if profilesDir == "" {
 		repoRoot, err := os.Getwd()
 		if err != nil {
-			return 0, 0, err
+			return nil, 0, err
 		}
 		profilesDir, err = FindNekoRayProfilesDir(repoRoot)
 		if err != nil {
-			return 0, 0, err
+			return nil, 0, err
 		}
 	}
 
 	if profilesDir == "" {
-		return 0, 0, nil
+		return nil, 0, nil
 	}
 
 	if stat, statErr := os.Stat(profilesDir); statErr != nil || !stat.IsDir() {
-		return 0, 0, fmt.Errorf("nekoray profiles dir not found: %s", profilesDir)
+		return nil, 0, fmt.Errorf("nekoray profiles dir not found: %s", profilesDir)
 	}
 
 	existingKeys, nextID, err := loadExistingNekoRayProfileKeys(profilesDir)
 	if err != nil {
-		return 0, 0, err
+		return nil, 0, err
 	}
 
 	content, err := os.ReadFile(mixedFilePath)
 	if err != nil {
-		return 0, 0, err
+		return nil, 0, err
 	}
 
 	lines := strings.Split(string(content), "\n")
@@ -175,19 +175,19 @@ func ExportMixedToNekoRayProfiles(mixedFilePath string, profilesDir string, grou
 		outPath := filepath.Join(profilesDir, fmt.Sprintf("%d.json", nextID))
 		data, err := json.MarshalIndent(profile, "", "    ")
 		if err != nil {
-			return added, skipped, err
+			return addedIDs, skipped, err
 		}
 		data = append(data, '\n')
 		if err := os.WriteFile(outPath, data, 0644); err != nil {
-			return added, skipped, err
+			return addedIDs, skipped, err
 		}
 
 		existingKeys[key] = true
+		addedIDs = append(addedIDs, nextID)
 		nextID++
-		added++
 	}
 
-	return added, skipped, nil
+	return addedIDs, skipped, nil
 }
 
 func profileTypeFromBean(bean any) string {

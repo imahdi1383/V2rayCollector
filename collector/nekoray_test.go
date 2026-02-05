@@ -178,12 +178,12 @@ func TestExportMixedToNekoRayProfiles_DedupAndID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	added, skipped, err := ExportMixedToNekoRayProfiles(mixed, profilesDir, 0)
+	addedIDs, skipped, err := ExportMixedToNekoRayProfiles(mixed, profilesDir, 0)
 	if err != nil {
 		t.Fatalf("ExportMixedToNekoRayProfiles error: %v", err)
 	}
-	if added != 1 || skipped != 1 {
-		t.Fatalf("unexpected counts: added=%d skipped=%d", added, skipped)
+	if len(addedIDs) != 1 || skipped != 1 {
+		t.Fatalf("unexpected counts: added=%d skipped=%d", len(addedIDs), skipped)
 	}
 
 	if _, err := os.Stat(filepath.Join(profilesDir, "3.json")); err != nil {
