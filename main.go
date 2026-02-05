@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -21,7 +22,7 @@ import (
 var (
 	client       = &http.Client{}
 	maxMessages  = 100
-	ConfigsNames = "@VaslMishi جوین بدی، وصل میشی"
+	ConfigsNames = "جوین بدی، وصل میشی @VaslMishi"
 	configs      = map[string]string{
 		"ss":     "",
 		"vmess":  "",
@@ -42,7 +43,11 @@ var (
 		"trojan": `(?m)trojan:\/\/.+?(%3A%40|#)`,
 		"vless":  `(?m)vless:\/\/.+?(%3A%40|#)`,
 	}
-	sort = flag.Bool("sort", false, "sort from latest to oldest (default : false)")
+	sort             = flag.Bool("sort", false, "sort from latest to oldest (default : false)")
+	nekorayEnabled   = flag.Bool("nekoray", true, "export configs into NekoRay profiles dir if available (use -nekoray=false to disable)")
+	nekorayProfiles  = flag.String("nekoray-profiles", "", "path to NekoRay profiles directory (optional)")
+	nekorayGroupID   = flag.Int("nekoray-group", 0, "NekoRay group id (default: 0)")
+	nekorayInputFile = flag.String("nekoray-input", "mixed_iran.txt", "input file to import into NekoRay (default: mixed_iran.txt)")
 )
 
 type ChannelsType struct {
@@ -110,6 +115,26 @@ func main() {
 	}
 
 	gologger.Info().Msg("All Done :D")
+
+	if *nekorayEnabled {
+		profilesDir := strings.TrimSpace(*nekorayProfiles)
+		if profilesDir == "" {
+			if cwd, err := os.Getwd(); err == nil {
+				if dir, err := collector.FindNekoRayProfilesDir(cwd); err == nil && dir != "" {
+					profilesDir = dir
+				}
+			}
+		}
+
+		if profilesDir != "" {
+			added, skipped, err := collector.ExportMixedToNekoRayProfiles(*nekorayInputFile, profilesDir, *nekorayGroupID)
+			if err != nil {
+				gologger.Error().Msg("NekoRay export failed: " + err.Error())
+			} else if added > 0 || skipped > 0 {
+				gologger.Info().Msg(fmt.Sprintf("NekoRay export: added=%d skipped=%d dir=%s", added, skipped, profilesDir))
+			}
+		}
+	}
 
 }
 

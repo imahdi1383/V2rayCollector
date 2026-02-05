@@ -70,6 +70,14 @@ This overwrites these files in the repo root:
 - `ss_iran.txt`
 - `mixed_iran.txt`
 
+## NekoRay auto-import (optional)
+If you put a portable NekoRay folder next to this repo (for example: `nekoray-*/nekoray/config/profiles`), the collector will also create JSON profiles there so they show up in the NekoRay GUI.
+
+Flags:
+- Disable: `-nekoray=false`
+- Custom profiles dir: `-nekoray-profiles "C:\path\to\nekoray\config\profiles"`
+- Import a different file: `-nekoray-input vless_iran.txt`
+
 
 ## Todos
  - [x] Adding comments to functions
@@ -88,4 +96,3 @@ This overwrites these files in the repo root:
 click [here](https://github.com/mrvcoder/V2rayCollector/blob/main/channels.csv) to see the list
 
 If you know other telegram channels which they put V2ray Configs feel free to add pull request :)
-
