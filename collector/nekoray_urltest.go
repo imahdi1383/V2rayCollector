@@ -28,12 +28,18 @@ type NekoRayURLTestOptions struct {
 	CoreExePath string
 	NekoRayDir  string
 	UpdateOrder bool
+
+	// Optional callback for long-running tests.
+	// Called periodically as results come in.
+	OnProgress func(tested int, total int, ok int)
 }
 
 type nekoRaySettings struct {
-	TestURL        string `json:"test_url"`
-	TestTimeout    int    `json:"test_dl_timeout"`
-	TestConcurrent int    `json:"test_concurrent"`
+	TestURL          string `json:"test_url"`
+	TestTimeout      int    `json:"test_dl_timeout"`
+	TestConcurrent   int    `json:"test_concurrent"`
+	InboundAddress   string `json:"inbound_address"`
+	InboundSocksPort int    `json:"inbound_socks_port"`
 }
 
 type nekoRayProfileMeta struct {
@@ -75,6 +81,35 @@ func LoadNekoRaySettingsFromProfilesDir(profilesDir string) (testURL string, tim
 	}
 
 	return testURL, timeout, concurrency, nil
+}
+
+func LoadNekoRayInboundFromProfilesDir(profilesDir string) (listenAddress string, listenPort int, err error) {
+	if profilesDir == "" {
+		return "", 0, errors.New("profilesDir is empty")
+	}
+
+	groupsDir := filepath.Clean(filepath.Join(profilesDir, "..", "groups"))
+	settingsPath := filepath.Join(groupsDir, "nekobox.json")
+	b, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return "", 0, err
+	}
+
+	var s nekoRaySettings
+	if err := json.Unmarshal(b, &s); err != nil {
+		return "", 0, err
+	}
+
+	listenAddress = strings.TrimSpace(s.InboundAddress)
+	if listenAddress == "" {
+		listenAddress = "127.0.0.1"
+	}
+	listenPort = s.InboundSocksPort
+	if listenPort <= 0 {
+		listenPort = 2080
+	}
+
+	return listenAddress, listenPort, nil
 }
 
 func FindNekoRayCoreExeFromProfilesDir(profilesDir string) (coreExe string, nekoRayDir string, err error) {
@@ -223,6 +258,15 @@ func NekoRayURLTestAndSort(opts NekoRayURLTestOptions) (tested int, ok int, err 
 		}
 		if err := updateNekoRayProfileYC(opts.ProfilesDir, r.id, r.latency); err != nil {
 			return tested, ok, err
+		}
+
+		if opts.OnProgress != nil {
+			// Throttle progress updates to avoid spamming logs.
+			// Always call on the first and last item.
+			total := len(idsToTest)
+			if tested == 1 || tested == total || tested%25 == 0 {
+				opts.OnProgress(tested, total, ok)
+			}
 		}
 	}
 

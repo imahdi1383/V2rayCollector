@@ -3,13 +3,17 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
+	"os/signal"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mrvcoder/V2rayCollector/collector"
@@ -21,10 +25,13 @@ import (
 )
 
 var (
-	client       = &http.Client{}
-	maxMessages  = 100
-	ConfigsNames = "جوین بدی، وصل میشی @VaslMishi"
-	configs      = map[string]string{
+	clientTransport        *http.Transport
+	client                 *http.Client
+	proxyMu                sync.RWMutex
+	currentProxyURL        *url.URL
+	defaultMessagesToCheck = 600
+	ConfigsNames           = "جوین بدی، وصل میشی @VaslMishi"
+	configs                = map[string]string{
 		"ss":     "",
 		"vmess":  "",
 		"trojan": "",
@@ -54,17 +61,223 @@ var (
 	nekorayTestURL         = flag.String("nekoray-test-url", "", "override URL used for URL test (default from NekoRay settings)")
 	nekorayTestTimeoutSec  = flag.Int("nekoray-test-timeout", 0, "URL test timeout in seconds (default from NekoRay settings)")
 	nekorayTestConcurrency = flag.Int("nekoray-test-concurrency", 0, "URL test concurrency (default from NekoRay settings)")
+	nekorayAutoProxy       = flag.Bool("nekoray-autoproxy", true, "if Telegram is unreachable, auto-start a local proxy using NekoRay profiles and retry")
+	nekorayAutoProxySystem = flag.Bool("nekoray-autoproxy-system-proxy", true, "enable Windows System Proxy while auto proxy is active (Windows only)")
+	nekorayAutoProxyKeep   = flag.Bool("nekoray-autoproxy-keep", false, "keep the proxy running and keep system proxy enabled after the program exits")
+	nekorayAutoProxyVerify = flag.String("nekoray-autoproxy-verify", "", "override verify URL used to check Telegram connectivity (default: the failing channel URL)")
+	httpTimeoutSec         = flag.Int("http-timeout", 30, "HTTP request timeout in seconds (default: 30)")
 )
 
 type ChannelsType struct {
 	URL             string `csv:"URL"`
 	AllMessagesFlag bool   `csv:"AllMessagesFlag"`
+	LastMessages    int    `csv:"LastMessages"`
+}
+
+var (
+	autoProxyMu    sync.Mutex
+	autoProxyTried bool
+	autoProxyStop  func() error
+)
+
+func initHTTPClient() {
+	clientTransport = http.DefaultTransport.(*http.Transport).Clone()
+	clientTransport.Proxy = func(req *http.Request) (*url.URL, error) {
+		proxyMu.RLock()
+		u := currentProxyURL
+		proxyMu.RUnlock()
+		return u, nil
+	}
+	client = &http.Client{Transport: clientTransport}
+}
+
+func setClientProxy(proxy string) error {
+	proxy = strings.TrimSpace(proxy)
+	if proxy == "" {
+		proxyMu.Lock()
+		currentProxyURL = nil
+		proxyMu.Unlock()
+		return nil
+	}
+	if !strings.Contains(proxy, "://") {
+		proxy = "http://" + proxy
+	}
+	u, err := url.Parse(proxy)
+	if err != nil {
+		return err
+	}
+	proxyMu.Lock()
+	currentProxyURL = u
+	proxyMu.Unlock()
+	return nil
+}
+
+func ensureTelegramProxy(failingURL string) error {
+	if !*nekorayAutoProxy {
+		return errors.New("nekoray-autoproxy is disabled")
+	}
+
+	autoProxyMu.Lock()
+	defer autoProxyMu.Unlock()
+
+	if autoProxyStop != nil {
+		return nil
+	}
+	if autoProxyTried {
+		return errors.New("auto proxy already attempted and failed")
+	}
+	autoProxyTried = true
+
+	profilesDir := strings.TrimSpace(*nekorayProfiles)
+	if profilesDir == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			if dir, err := collector.FindNekoRayProfilesDir(cwd); err == nil && dir != "" {
+				profilesDir = dir
+			}
+		}
+	}
+
+	verifyURL := strings.TrimSpace(*nekorayAutoProxyVerify)
+	if verifyURL == "" {
+		verifyURL = failingURL
+	}
+
+	timeout := time.Duration(0)
+	if *nekorayTestTimeoutSec > 0 {
+		timeout = time.Duration(*nekorayTestTimeoutSec) * time.Second
+	} else {
+		// Auto-proxy should be fast by default (many users have hundreds of profiles).
+		timeout = 8 * time.Second
+	}
+	concurrency := *nekorayTestConcurrency
+	if concurrency <= 0 {
+		concurrency = 20
+	}
+
+	gologger.Info().Msg("Telegram unreachable, trying NekoRay auto-proxy...")
+	res, err := collector.EnsureNekoRayProxyForURL(collector.NekoRayAutoProxyOptions{
+		ProfilesDir:       profilesDir,
+		GroupID:           *nekorayGroupID,
+		VerifyURL:         verifyURL,
+		URLTest:           true,
+		URLTestURL:        strings.TrimSpace(*nekorayTestURL),
+		URLTestTimeout:    timeout,
+		URLTestConcurrent: concurrency,
+		EnableSystemProxy: *nekorayAutoProxySystem,
+		KeepProxyRunning:  *nekorayAutoProxyKeep,
+		CoreStartTimeout:  12 * time.Second,
+		VerifyTimeout:     15 * time.Second,
+		Logf: func(format string, args ...any) {
+			gologger.Info().Msg(fmt.Sprintf(format, args...))
+		},
+	})
+	if err != nil {
+		return err
+	}
+
+	if err := setClientProxy(res.ProxyURL); err != nil {
+		return err
+	}
+
+	autoProxyStop = res.Stop
+	gologger.Info().Msg(fmt.Sprintf("Auto proxy enabled via NekoRay profile id=%d proxy=%s", res.ProfileID, res.ProxyURL))
+	return nil
+}
+
+func installInterruptHandler() {
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt)
+	go func() {
+		<-c
+		gologger.Info().Msg("Interrupted, cleaning up...")
+
+		autoProxyMu.Lock()
+		stop := autoProxyStop
+		autoProxyMu.Unlock()
+		if stop != nil {
+			_ = stop()
+		}
+
+		os.Exit(130)
+	}()
+}
+
+func disableProxyForURLTest() (restore func()) {
+	prevHTTPProxy := os.Getenv("HTTP_PROXY")
+	prevHTTPSProxy := os.Getenv("HTTPS_PROXY")
+
+	restoreEnv := func() {
+		if prevHTTPProxy == "" {
+			_ = os.Unsetenv("HTTP_PROXY")
+		} else {
+			_ = os.Setenv("HTTP_PROXY", prevHTTPProxy)
+		}
+		if prevHTTPSProxy == "" {
+			_ = os.Unsetenv("HTTPS_PROXY")
+		} else {
+			_ = os.Setenv("HTTPS_PROXY", prevHTTPSProxy)
+		}
+	}
+
+	_ = os.Unsetenv("HTTP_PROXY")
+	_ = os.Unsetenv("HTTPS_PROXY")
+
+	var restoreSystemProxy func() error
+	if snap, err := collector.GetSystemProxySnapshot(); err == nil && snap.Enabled {
+		restore, err := collector.DisableSystemProxy()
+		if err == nil {
+			restoreSystemProxy = restore
+			gologger.Info().Msg("System Proxy temporarily disabled for URL test")
+		} else {
+			gologger.Error().Msg("Failed to disable System Proxy for URL test: " + err.Error())
+		}
+	}
+
+	return func() {
+		restoreEnv()
+		if restoreSystemProxy != nil {
+			_ = restoreSystemProxy()
+		}
+	}
 }
 
 func main() {
 
 	gologger.DefaultLogger.SetMaxLevel(levels.LevelDebug)
 	flag.Parse()
+	initHTTPClient()
+	installInterruptHandler()
+	if *httpTimeoutSec > 0 {
+		client.Timeout = time.Duration(*httpTimeoutSec) * time.Second
+	}
+	defer func() {
+		autoProxyMu.Lock()
+		stop := autoProxyStop
+		autoProxyMu.Unlock()
+		if stop != nil {
+			_ = stop()
+		}
+	}()
+
+	// If the user already provided a proxy via env vars, use it for this process too.
+	if p := strings.TrimSpace(os.Getenv("HTTP_PROXY")); p != "" {
+		_ = setClientProxy(p)
+	} else if p := strings.TrimSpace(os.Getenv("HTTPS_PROXY")); p != "" {
+		_ = setClientProxy(p)
+	}
+
+	// Go does not automatically use Windows System Proxy settings; if a system proxy is enabled,
+	// set it for this process too.
+	if os.Getenv("HTTP_PROXY") == "" && os.Getenv("HTTPS_PROXY") == "" {
+		if snap, err := collector.GetSystemProxySnapshot(); err == nil {
+			if proxy, ok := collector.SystemProxyHTTPProxyURL(snap); ok {
+				_ = os.Setenv("HTTP_PROXY", proxy)
+				_ = os.Setenv("HTTPS_PROXY", proxy)
+				_ = setClientProxy(proxy)
+				gologger.Info().Msg("Using System Proxy: " + proxy)
+			}
+		}
+	}
 
 	fileData, err := collector.ReadFileContent("channels.csv")
 	var channels []ChannelsType
@@ -79,19 +292,29 @@ func main() {
 		channel.URL = collector.ChangeUrlToTelegramWebUrl(channel.URL)
 
 		// get channel messages
-		resp := HttpRequest(channel.URL)
+		gologger.Info().Msg("Fetching " + channel.URL)
+		resp, err := HttpRequest(channel.URL)
+		if err != nil {
+			gologger.Error().Msg("Failed to fetch " + channel.URL + ": " + err.Error())
+			continue
+		}
 		doc, err := goquery.NewDocumentFromReader(resp.Body)
-		err = resp.Body.Close()
+		_ = resp.Body.Close()
 
 		if err != nil {
-			gologger.Error().Msg(err.Error())
+			gologger.Error().Msg("Failed to parse " + channel.URL + ": " + err.Error())
+			continue
 		}
 
 		fmt.Println(" ")
 		fmt.Println(" ")
 		fmt.Println("---------------------------------------")
-		gologger.Info().Msg("Crawling " + channel.URL)
-		CrawlForV2ray(doc, channel.URL, channel.AllMessagesFlag)
+		messagesToCheck := channel.LastMessages
+		if messagesToCheck <= 0 {
+			messagesToCheck = defaultMessagesToCheck
+		}
+		gologger.Info().Msg(fmt.Sprintf("Crawling %s (last %d messages)", channel.URL, messagesToCheck))
+		CrawlForV2ray(doc, channel.URL, channel.AllMessagesFlag, messagesToCheck)
 		gologger.Info().Msg("Crawled " + channel.URL + " ! ")
 		fmt.Println("---------------------------------------")
 		fmt.Println(" ")
@@ -141,6 +364,9 @@ func main() {
 			}
 
 			if *nekorayURLTest {
+				restoreProxy := disableProxyForURLTest()
+				defer restoreProxy()
+
 				onlyIDs := addedIDs
 				if *nekorayURLTestAll {
 					onlyIDs = nil
@@ -205,15 +431,15 @@ func AddConfigNames(config string, configtype string) string {
 	return newConfigs
 }
 
-func CrawlForV2ray(doc *goquery.Document, channelLink string, HasAllMessagesFlag bool) {
+func CrawlForV2ray(doc *goquery.Document, channelLink string, HasAllMessagesFlag bool, messagesToCheck int) {
 	// here we are updating our DOM to include the x messages
 	// in our DOM and then extract the messages from that DOM
 	messages := doc.Find(".tgme_widget_message_wrap").Length()
 	link, exist := doc.Find(".tgme_widget_message_wrap .js-widget_message").Last().Attr("data-post")
 
-	if messages < maxMessages && exist {
+	if messages < messagesToCheck && exist {
 		number := strings.Split(link, "/")[1]
-		doc = GetMessages(maxMessages, doc, number, channelLink)
+		doc = GetMessages(messagesToCheck, doc, number, channelLink)
 	}
 
 	// extract v2ray based on message type and store configs at [configs] map
@@ -362,28 +588,46 @@ func EditVmessPs(config string, fileName string, AddConfigName bool) string {
 }
 
 func loadMore(link string) *goquery.Document {
-	req, _ := http.NewRequest("GET", link, nil)
 	fmt.Println(link)
-	resp, _ := client.Do(req)
-	doc, _ := goquery.NewDocumentFromReader(resp.Body)
+	resp, err := HttpRequest(link)
+	if err != nil {
+		return nil
+	}
+	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		return nil
+	}
 	return doc
 }
 
-func HttpRequest(url string) *http.Response {
-	req, err := http.NewRequest("GET", url, nil)
+func HttpRequest(targetURL string) (*http.Response, error) {
+	req, err := http.NewRequest("GET", targetURL, nil)
 	if err != nil {
-		gologger.Fatal().Msg(fmt.Sprintf("Error When requesting to: %s Error : %s", url, err))
+		return nil, err
 	}
+	req.Header.Set("User-Agent", "Mozilla/5.0")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		gologger.Fatal().Msg(err.Error())
+		if err2 := ensureTelegramProxy(targetURL); err2 == nil {
+			req2, err := http.NewRequest("GET", targetURL, nil)
+			if err != nil {
+				return nil, err
+			}
+			req2.Header.Set("User-Agent", "Mozilla/5.0")
+			return client.Do(req2)
+		}
+		return nil, err
 	}
-	return resp
+	return resp, nil
 }
 
 func GetMessages(length int, doc *goquery.Document, number string, channel string) *goquery.Document {
 	x := loadMore(channel + "?before=" + number)
+	if x == nil {
+		return doc
+	}
 
 	html2, _ := x.Html()
 	reader2 := strings.NewReader(html2)

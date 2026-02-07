@@ -46,6 +46,8 @@ $env:HTTPS_PROXY="http://127.0.0.1:2080"
 go run . -sort
 ```
 
+If you have NekoRay next to this repo and already have profiles in it, the collector can also auto-fix Telegram connectivity by starting a temporary local proxy from the best profile (see `-nekoray-autoproxy` flags below).
+
 Or use the helper scripts:
 
 ```powershell
@@ -80,6 +82,9 @@ Flags:
 - URL test + sort by ping (default enabled): `-nekoray-urltest=true`
 - URL test all profiles (can be slow): `-nekoray-urltest-all=true`
 - Override test URL / timeouts: `-nekoray-test-url http://cp.cloudflare.com/ -nekoray-test-timeout 30 -nekoray-test-concurrency 5`
+- Telegram auto-proxy (if `t.me` is blocked): `-nekoray-autoproxy=true`
+- Keep auto-proxy running after exit: `-nekoray-autoproxy-keep=true`
+- Don't toggle Windows System Proxy: `-nekoray-autoproxy-system-proxy=false`
 
 
 ## Todos
@@ -97,5 +102,10 @@ Flags:
 
 # Telegram channels list that used as source 😉 
 click [here](https://github.com/mrvcoder/V2rayCollector/blob/main/channels.csv) to see the list
+
+`channels.csv` columns:
+- `URL`: Telegram channel link
+- `AllMessagesFlag`: when `true`, scans full message text (slower but finds configs not inside `code/pre` blocks). When `false`, scans only `code/pre` blocks (faster/cleaner).
+- `LastMessages`: how many latest messages to fetch per channel (default: `600`)
 
 If you know other telegram channels which they put V2ray Configs feel free to add pull request :)
