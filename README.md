@@ -1,6 +1,6 @@
 # Introduction
 
-**First project on the internet** that crawls v2ray configs from Telegram channels. And the list will update every 5 hours. 😋
+A project that crawls v2ray configs from Telegram channels.
 
 # How to use this ?! 🤔
 
@@ -34,34 +34,14 @@ Run once from the repo root:
 
 ```powershell
 go mod download
-go run . -sort
+go run .
 ```
-
-If Telegram opens in your browser but CLI tools time out, you likely need the same proxy/VPN your browser uses.
-Go uses `HTTP_PROXY` / `HTTPS_PROXY` env vars (it does not automatically use Windows proxy settings):
-
-```powershell
-$env:HTTP_PROXY="http://127.0.0.1:2080"
-$env:HTTPS_PROXY="http://127.0.0.1:2080"
-go run . -sort
-```
-
-If you have NekoRay next to this repo and already have profiles in it, the collector can also auto-fix Telegram connectivity by starting a temporary local proxy from the best profile (see `-nekoray-autoproxy` flags below).
-
-Or use the helper scripts:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-once.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-every-15min.ps1
-```
-
-`scripts/run-once.ps1` will also try to auto-use your Windows proxy settings if `HTTP_PROXY`/`HTTPS_PROXY` are not set.
 
 ## Linux / macOS
 
 ```bash
 go mod download
-go run . -sort
+go run .
 ```
 
 ## Outputs
@@ -74,6 +54,8 @@ This overwrites these files in the repo root:
 
 ## NekoRay auto-import (optional)
 If you put a portable NekoRay folder next to this repo (for example: `nekoray-*/nekoray/config/profiles`), the collector will also create JSON profiles there so they show up in the NekoRay GUI.
+
+After it finishes, it will URL-test profiles, sort by lowest ping, remove unavailable profiles (when >10 OK exist), and connect to the best profile with Windows System Proxy enabled.
 
 Flags:
 - Disable: `-nekoray=false`
@@ -93,7 +75,7 @@ Flags:
  - [ ] Add feature to only stores configs from present until x days ago
  - [x] Sort the stored configs (from latest to oldest)
  - [x] Optimze config exctraction (only get config and remove the dsc and other things)
- - [x] Read Channels from channels.csv (it should support {all_messages} flag)
+ - [x] Read Channels from channels.csv
  - [ ] Update README (add usage of configs in different os and move channels list to channels.csv)
  - [ ] Add support for v2ray configs that posted in json data
  - [ ] Add support for configing script to limit configs count in each files
@@ -105,7 +87,6 @@ click [here](https://github.com/mrvcoder/V2rayCollector/blob/main/channels.csv) 
 
 `channels.csv` columns:
 - `URL`: Telegram channel link
-- `AllMessagesFlag`: when `true`, scans full message text (slower but finds configs not inside `code/pre` blocks). When `false`, scans only `code/pre` blocks (faster/cleaner).
 - `LastMessages`: how many latest messages to fetch per channel (default: `600`)
 
 If you know other telegram channels which they put V2ray Configs feel free to add pull request :)

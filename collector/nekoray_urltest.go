@@ -283,6 +283,53 @@ func NekoRayURLTestAndSort(opts NekoRayURLTestOptions) (tested int, ok int, err 
 	return tested, ok, nil
 }
 
+func NekoRayCountOKProfiles(profilesDir string, groupID int) (ok int, err error) {
+	if strings.TrimSpace(profilesDir) == "" {
+		return 0, errors.New("profilesDir is empty")
+	}
+
+	metas, err := loadNekoRayProfilesMeta(profilesDir, groupID)
+	if err != nil {
+		return 0, err
+	}
+	for _, m := range metas {
+		if m.Yc > 0 {
+			ok++
+		}
+	}
+	return ok, nil
+}
+
+func NekoRayRemoveUnavailableProfiles(profilesDir string, groupID int) (removed int, err error) {
+	if strings.TrimSpace(profilesDir) == "" {
+		return 0, errors.New("profilesDir is empty")
+	}
+
+	metas, err := loadNekoRayProfilesMeta(profilesDir, groupID)
+	if err != nil {
+		return 0, err
+	}
+
+	for _, m := range metas {
+		if m.Yc >= 0 {
+			continue
+		}
+		path := filepath.Join(profilesDir, fmt.Sprintf("%d.json", m.ID))
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return removed, err
+		}
+		removed++
+	}
+
+	if removed > 0 {
+		if err := sortNekoRayGroupByYC(profilesDir, groupID); err != nil {
+			return removed, err
+		}
+	}
+
+	return removed, nil
+}
+
 func runSingBoxFetch(coreExe string, nekoRayDir string, configPath string, testURL string, outboundTag string, timeout time.Duration) (latencyMS int, ok bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()

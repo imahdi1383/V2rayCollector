@@ -51,7 +51,7 @@ var (
 		"trojan": `(?m)trojan:\/\/.+?(%3A%40|#)`,
 		"vless":  `(?m)vless:\/\/.+?(%3A%40|#)`,
 	}
-	sort                   = flag.Bool("sort", false, "sort from latest to oldest (default : false)")
+	sort                   = flag.Bool("sort", true, "sort from latest to oldest (default: true). Disable with -sort=false")
 	nekorayEnabled         = flag.Bool("nekoray", true, "export configs into NekoRay profiles dir if available (use -nekoray=false to disable)")
 	nekorayProfiles        = flag.String("nekoray-profiles", "", "path to NekoRay profiles directory (optional)")
 	nekorayGroupID         = flag.Int("nekoray-group", 0, "NekoRay group id (default: 0)")
@@ -69,9 +69,8 @@ var (
 )
 
 type ChannelsType struct {
-	URL             string `csv:"URL"`
-	AllMessagesFlag bool   `csv:"AllMessagesFlag"`
-	LastMessages    int    `csv:"LastMessages"`
+	URL          string `csv:"URL"`
+	LastMessages int    `csv:"LastMessages"`
 }
 
 var (
@@ -314,7 +313,7 @@ func main() {
 			messagesToCheck = defaultMessagesToCheck
 		}
 		gologger.Info().Msg(fmt.Sprintf("Crawling %s (last %d messages)", channel.URL, messagesToCheck))
-		CrawlForV2ray(doc, channel.URL, channel.AllMessagesFlag, messagesToCheck)
+		CrawlForV2ray(doc, channel.URL, messagesToCheck)
 		gologger.Info().Msg("Crawled " + channel.URL + " ! ")
 		fmt.Println("---------------------------------------")
 		fmt.Println(" ")
@@ -326,18 +325,12 @@ func main() {
 	for proto, configcontent := range configs {
 		lines := collector.RemoveDuplicate(configcontent)
 		lines = AddConfigNames(lines, proto)
+		linesArr := strings.Split(lines, "\n")
 		if *sort {
-			// 		from latest to oldest mode :
-			linesArr := strings.Split(lines, "\n")
+			// from latest to oldest
 			linesArr = collector.Reverse(linesArr)
-			lines = strings.Join(linesArr, "\n")
-		} else {
-			// 		from oldest to latest mode :
-			linesArr := strings.Split(lines, "\n")
-			linesArr = collector.Reverse(linesArr)
-			linesArr = collector.Reverse(linesArr)
-			lines = strings.Join(linesArr, "\n")
 		}
+		lines = strings.Join(linesArr, "\n")
 		lines = strings.TrimSpace(lines)
 		collector.WriteToFile(lines, proto+"_iran.txt")
 
@@ -386,8 +379,68 @@ func main() {
 				})
 				if err != nil {
 					gologger.Error().Msg("NekoRay URL test failed: " + err.Error())
-				} else if tested > 0 {
-					gologger.Info().Msg(fmt.Sprintf("NekoRay URL test: tested=%d ok=%d", tested, ok))
+				} else {
+					if tested > 0 {
+						gologger.Info().Msg(fmt.Sprintf("NekoRay URL test: tested=%d ok=%d", tested, ok))
+					}
+				}
+			}
+
+			okTotal, err := collector.NekoRayCountOKProfiles(profilesDir, *nekorayGroupID)
+			if err != nil {
+				gologger.Error().Msg("NekoRay count ok failed: " + err.Error())
+			} else {
+				if okTotal > 10 {
+					removed, err := collector.NekoRayRemoveUnavailableProfiles(profilesDir, *nekorayGroupID)
+					if err != nil {
+						gologger.Error().Msg("NekoRay remove unavailable failed: " + err.Error())
+					} else if removed > 0 {
+						gologger.Info().Msg(fmt.Sprintf("NekoRay remove unavailable: removed=%d", removed))
+					}
+				}
+
+				if okTotal > 0 {
+					verifyURL := strings.TrimSpace(*nekorayAutoProxyVerify)
+					if verifyURL == "" && len(channels) > 0 {
+						verifyURL = collector.ChangeUrlToTelegramWebUrl(strings.TrimSpace(channels[0].URL))
+					}
+					if verifyURL == "" {
+						verifyURL = "http://cp.cloudflare.com/"
+					}
+
+					// Stop any temporary auto-proxy we started for crawling Telegram, then connect
+					// to the best (lowest ping) profile and keep it running with System Proxy enabled.
+					autoProxyMu.Lock()
+					prevStop := autoProxyStop
+					autoProxyStop = nil
+					autoProxyMu.Unlock()
+					if prevStop != nil {
+						_ = prevStop()
+					}
+
+					res, err := collector.EnsureNekoRayProxyForURL(collector.NekoRayAutoProxyOptions{
+						ProfilesDir:       profilesDir,
+						GroupID:           *nekorayGroupID,
+						VerifyURL:         verifyURL,
+						URLTest:           false,
+						EnableSystemProxy: true,
+						KeepProxyRunning:  true,
+						CoreStartTimeout:  12 * time.Second,
+						VerifyTimeout:     15 * time.Second,
+						Logf: func(format string, args ...any) {
+							gologger.Info().Msg(fmt.Sprintf(format, args...))
+						},
+					})
+					if err != nil {
+						gologger.Error().Msg("NekoRay final connect failed: " + err.Error())
+					} else {
+						autoProxyMu.Lock()
+						autoProxyStop = res.Stop
+						autoProxyMu.Unlock()
+						gologger.Info().Msg(fmt.Sprintf("System Proxy enabled via best profile id=%d proxy=%s", res.ProfileID, res.ProxyURL))
+					}
+				} else {
+					gologger.Info().Msg("NekoRay: no OK profiles found; skipping final connect")
 				}
 			}
 		}
@@ -431,7 +484,7 @@ func AddConfigNames(config string, configtype string) string {
 	return newConfigs
 }
 
-func CrawlForV2ray(doc *goquery.Document, channelLink string, HasAllMessagesFlag bool, messagesToCheck int) {
+func CrawlForV2ray(doc *goquery.Document, channelLink string, messagesToCheck int) {
 	// here we are updating our DOM to include the x messages
 	// in our DOM and then extract the messages from that DOM
 	messages := doc.Find(".tgme_widget_message_wrap").Length()
@@ -443,84 +496,37 @@ func CrawlForV2ray(doc *goquery.Document, channelLink string, HasAllMessagesFlag
 	}
 
 	// extract v2ray based on message type and store configs at [configs] map
-	if HasAllMessagesFlag {
-		// get all messages and check for v2ray configs
-		doc.Find(".tgme_widget_message_text").Each(func(j int, s *goquery.Selection) {
-			// For each item found, get the band and title
-			messageText, _ := s.Html()
-			str := strings.Replace(messageText, "<br/>", "\n", -1)
-			doc, _ := goquery.NewDocumentFromReader(strings.NewReader(str))
-			messageText = doc.Text()
-			line := strings.TrimSpace(messageText)
-			lines := strings.Split(line, "\n")
-			for _, data := range lines {
-				extractedConfigs := strings.Split(ExtractConfig(data, []string{}), "\n")
-				for _, extractedConfig := range extractedConfigs {
-					extractedConfig = strings.ReplaceAll(extractedConfig, " ", "")
-					if extractedConfig != "" {
+	// Always scan full message text (finds configs even when not inside code/pre blocks).
+	doc.Find(".tgme_widget_message_text").Each(func(j int, s *goquery.Selection) {
+		messageText, _ := s.Html()
+		str := strings.ReplaceAll(messageText, "<br/>", "\n")
+		doc, _ := goquery.NewDocumentFromReader(strings.NewReader(str))
+		messageText = doc.Text()
+		line := strings.TrimSpace(messageText)
+		lines := strings.Split(line, "\n")
+		for _, data := range lines {
+			extractedConfigs := strings.Split(ExtractConfig(data, []string{}), "\n")
+			for _, extractedConfig := range extractedConfigs {
+				extractedConfig = strings.ReplaceAll(extractedConfig, " ", "")
+				if extractedConfig == "" {
+					continue
+				}
 
-						// check if it is vmess or not
-						re := regexp.MustCompile(myregex["vmess"])
-						matches := re.FindStringSubmatch(extractedConfig)
+				// check if it is vmess or not
+				re := regexp.MustCompile(myregex["vmess"])
+				matches := re.FindStringSubmatch(extractedConfig)
 
-						if len(matches) > 0 {
-							extractedConfig = EditVmessPs(extractedConfig, "mixed", false)
-							if line != "" {
-								configs["mixed"] += extractedConfig + "\n"
-							}
-						} else {
-							configs["mixed"] += extractedConfig + "\n"
-						}
-
+				if len(matches) > 0 {
+					extractedConfig = EditVmessPs(extractedConfig, "mixed", false)
+					if line != "" {
+						configs["mixed"] += extractedConfig + "\n"
 					}
+				} else {
+					configs["mixed"] += extractedConfig + "\n"
 				}
 			}
-		})
-	} else {
-		// get only messages that are inside code or pre tag and check for v2ray configs
-		doc.Find("code,pre").Each(func(j int, s *goquery.Selection) {
-			messageText, _ := s.Html()
-			str := strings.ReplaceAll(messageText, "<br/>", "\n")
-			doc, _ := goquery.NewDocumentFromReader(strings.NewReader(str))
-			messageText = doc.Text()
-			line := strings.TrimSpace(messageText)
-			lines := strings.Split(line, "\n")
-			for _, data := range lines {
-				extractedConfigs := strings.Split(ExtractConfig(data, []string{}), "\n")
-				for protoRegex, regexValue := range myregex {
-
-					for _, extractedConfig := range extractedConfigs {
-
-						re := regexp.MustCompile(regexValue)
-						matches := re.FindStringSubmatch(extractedConfig)
-						if len(matches) > 0 {
-							extractedConfig = strings.ReplaceAll(extractedConfig, " ", "")
-							if extractedConfig != "" {
-								if protoRegex == "vmess" {
-									extractedConfig = EditVmessPs(extractedConfig, protoRegex, false)
-									if extractedConfig != "" {
-										configs[protoRegex] += extractedConfig + "\n"
-									}
-								} else if protoRegex == "ss" {
-									Prefix := strings.Split(matches[0], "ss://")[0]
-									if Prefix == "" {
-										configs[protoRegex] += extractedConfig + "\n"
-									}
-								} else {
-
-									configs[protoRegex] += extractedConfig + "\n"
-								}
-
-							}
-						}
-
-					}
-
-				}
-			}
-
-		})
-	}
+		}
+	})
 }
 
 func ExtractConfig(Txt string, Tempconfigs []string) string {
