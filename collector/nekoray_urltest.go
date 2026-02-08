@@ -213,6 +213,10 @@ func NekoRayURLTestAndSort(opts NekoRayURLTestOptions) (tested int, ok int, err 
 	}
 	defer cleanup()
 
+	if err := checkSingBoxConfig(opts.CoreExePath, opts.NekoRayDir, tempConfig); err != nil {
+		return 0, 0, err
+	}
+
 	jobs := make(chan int)
 	type result struct {
 		id      int
@@ -300,6 +304,32 @@ func runSingBoxFetch(coreExe string, nekoRayDir string, configPath string, testU
 	return int(time.Since(start).Milliseconds()), true
 }
 
+func checkSingBoxConfig(coreExe string, nekoRayDir string, configPath string) error {
+	cmd := exec.Command(coreExe,
+		"--disable-color",
+		"-D", nekoRayDir,
+		"-c", configPath,
+		"check",
+	)
+	cmd.Env = os.Environ()
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+
+	msg := strings.TrimSpace(string(out))
+	if msg == "" {
+		msg = err.Error()
+	}
+
+	// Avoid flooding logs with the full output; show only the tail.
+	if len(msg) > 4000 {
+		msg = msg[len(msg)-4000:]
+	}
+
+	return fmt.Errorf("nekoray url test: invalid sing-box config: %s", msg)
+}
+
 func buildSingBoxConfigForProfiles(profilesDir string, groupID int, onlyIDs []int) (configPath string, tagForID map[int]string, cleanup func(), err error) {
 	onlySet := make(map[int]bool)
 	for _, id := range onlyIDs {
@@ -349,12 +379,12 @@ func buildSingBoxConfigForProfiles(profilesDir string, groupID int, onlyIDs []in
 		}
 
 		tag := "p" + strconv.Itoa(meta.ID)
-		tagForID[meta.ID] = tag
 
 		ob, err := singBoxOutboundFromNekoRayProfile(raw.Type, raw.Bean, tag)
 		if err != nil {
 			continue
 		}
+		tagForID[meta.ID] = tag
 		outbounds = append(outbounds, ob)
 	}
 
@@ -454,7 +484,6 @@ func singBoxOutboundFromVless(bean NekoRayVlessBean, tag string) map[string]any 
 		"server":      bean.Addr,
 		"server_port": bean.Port,
 		"uuid":        bean.Pass,
-		"encryption":  "none",
 	}
 	if tls := singBoxTLS(bean.Stream); tls != nil {
 		ob["tls"] = tls
@@ -539,13 +568,13 @@ func singBoxTransport(stream NekoRayStream) map[string]any {
 		return tr
 	case "grpc":
 		serviceName := strings.TrimSpace(stream.ServiceName)
-		if serviceName == "" {
-			return nil
+		tr := map[string]any{
+			"type": "grpc",
 		}
-		return map[string]any{
-			"type":         "grpc",
-			"service_name": serviceName,
+		if serviceName != "" {
+			tr["service_name"] = serviceName
 		}
+		return tr
 	default:
 		return nil
 	}
